@@ -5,10 +5,13 @@
   .DESCRIPTION
 	This script will query the domain to find organizational information within the context of the user who runs it. Best used as a logon script via GPO.
 	For example, it can be used to find their name, their phone number, their job title, or custom extensionAttribute's
-	It will then create a standardized outlook signature using the supplied $Body data and AD info, which can be applied it to their outlook and OWA settings via args.
+	It will then create a standardized outlook signature using the supplied $Body data and AD info, which can be applied it to their outlook settings via args. On-prem OWA is next on the list.
 
+	This setup requires you to first standardize a signature in Outlook, then copy the actual html data from the signature file and place it in the $Body variable. 
+	You will then remove their name and other details and replace them with variables.
+	
 	You can change some of the behaviors by changing the registry variables.
-	Currently supports Outlook 2016/2019.
+	Currently only supports Outlook 2016/2019.
 	
 	This is meant to be edited for your own use.
   .PARAMETER NoWriteReg
@@ -29,9 +32,12 @@ param (
 	[switch]$NoWriteReg = $False
 )
 
-# Created by: ShortToGround
+# Created by: JamesIsAwkward
 # Date created: 03/15/2021
 
+# You will need to point this to a share that can be accessed by the user. I chose a SYSVOL location personally, since this was running as a logon script.
+# I'm not totally sure but I think all html signatures will have a "files" folder
+$FilesLocation = ""
 
 # First let's find the user's information
 # I did it this way to avoid installing the AD module on each machine
@@ -44,7 +50,7 @@ $UserInfo = $ADUserPath.GetDirectoryEntry()
 
 
 # Now we pull the desired information
-# EDIT TO YOUR NEEDS
+#### EDIT TO YOUR NEEDS ####
 $Name = $UserInfo.Name
 $JobTitle = $UserInfo.Title
 $OutsidePhoneNumber = $UserInfo.Telephonenumber
@@ -52,7 +58,7 @@ $OutsidePhoneNumber = $UserInfo.Telephonenumber
 #$Example1 = $UserInfo.extensionAttribute1
 
 
-# If you signature contains images or logos or etc they will be stored in a dir with this name
+# If your signature contains images or logos or etc they will be stored in a dir with this name
 $UsernameFiles = "$Username"+"_files"
 
 # Name of the actual signature htm file
@@ -84,6 +90,9 @@ $HTMFileName = "$Username"+".htm"
 # In our case I needed a single standard signature template. So I took a known good signature, and extracted the html data here.
 # It's quite long so I didn't feel like sanitizing it and including it
 # This is also an example of how easy it is to add in the html output from the example above
+
+
+### PLACE YOUR HTML DATA IN THIS VARIABLE ###
 $Body = @"
   $NameHTML
   
@@ -98,9 +107,7 @@ $Body = @"
 $SignatureFolder = "$env:APPDATA\Microsoft\Signatures"
 $SignatureFilesFolder = "$env:APPDATA\Microsoft\Signatures\$UsernameFiles"
 
-# You will need to point this to a share that can be accessed by the user. I chose a SYSVOL location personally, since this was running as a logon script.
-# I'm not totally sure but I think all html signatures will have this folder
-$FilesLocation = ""
+
 
 
 
@@ -126,7 +133,7 @@ $filelistXML = @"
 
 
 # Really quick and dirty error checking. Don't want to create a signature file if some of the key information is missing.
-# Don't judge for the bad error checking :)
+# Don't judge for the bad code :)
 If (($Name -eq $Null) -or ($Name -eq "") -or ($JobTitle -eq $Null) -or ($JobTitle -eq "") -or ($OutsidePhoneNumber -eq $Null) -or ($OutsidePhoneNumber -eq "")){
 	Write-Host "Required information is missing, aborting..."
 	Exit
@@ -181,15 +188,38 @@ Else{
 	$Body | Out-File "$env:APPDATA\Microsoft\Signatures\$HTMFileName"
 	
 	If (!$NoWriteReg){
+		# Let's check a few things to make this nice
+		# In order to keep the old signature from hanging on for dear life, let's see if it's there. If so, let's NUKE it
+		# Otherwise the common settings will apply, but you'll have to actually open the signature menu to get it to change from the original if it was already set
+		$NewSigCheck = Get-ItemProperty "HKCU:SOFTWARE\Microsoft\Office\16.0\Outlook\Profiles\Outlook\9375CFF0413111d3B88A00104B2A6676\00000002" -Name "New Signature"
+		$ReplySigCheck = Get-ItemProperty "HKCU:SOFTWARE\Microsoft\Office\16.0\Outlook\Profiles\Outlook\9375CFF0413111d3B88A00104B2A6676\00000002" -Name "Reply-Forward Signature"
+		$AccountCheck = Get-ItemProperty "HKCU:SOFTWARE\Microsoft\Office\16.0\Outlook\Profiles\Outlook\9375CFF0413111d3B88A00104B2A6676\00000002" -Name "Account Name"
+		$MailboxName = $UserInfo.mail
+		
+		# Safe guard in case their information isn't saved her for some reason, not sure if having multiple accounts will throw this off
+		# So it'll only make changes if account matches
+		# Need to look into this more later
+		If ($AccountCheck."Account Name" -eq $MailboxName){
+			If ($NewSigCheck."New Signature" -ne "$env:USERNAME"){
+				# Since we don't want this old signature hanging around, let's delete it
+				$OldSignatureName = $NewSigCheck."New Signature"
+				If (Test-Path "$env:APPDATA\Microsoft\Signatures\$OldSignatureName.htm"){
+					Remove-Item "$env:APPDATA\Microsoft\Signatures\$OldSignatureName.htm"
+				}
+				Set-ItemProperty -Path "HKCU:SOFTWARE\Microsoft\Office\16.0\Outlook\Profiles\Outlook\9375CFF0413111d3B88A00104B2A6676\00000002" -Name "New Signature" -Value "$env:USERNAME" -Type "String"
+			}
+			
+			If ($ReplySigCheck."Reply-Forward Signature" -ne "$env:USERNAME"){
+				If (Test-Path "$env:APPDATA\Microsoft\Signatures\$ReplySigCheck.htm"){
+					Remove-Item "$env:APPDATA\Microsoft\Signatures\$ReplySigCheck.htm"
+				}
+				Set-ItemProperty -Path "HKCU:SOFTWARE\Microsoft\Office\16.0\Outlook\Profiles\Outlook\9375CFF0413111d3B88A00104B2A6676\00000002" -Name "Reply-Forward Signature" -Value "$env:USERNAME" -Type "String"
+			}
+		}
+		
 		# Setting the common office settings means the users will not be able to change this signature or select a new one
-		# Should probably just check these before writing but oh well 
+		# Should probably add a check to see if this is already set...
 		Set-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Office\16.0\Common\MailSettings" -Name "NewSignature" -Value "$env:USERNAME" -Type "ExpandString"
 		Set-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Office\16.0\Common\MailSettings" -Name "ReplySignature" -Value "$env:USERNAME" -Type "ExpandString"
 	}
 }
-
-
-
-
-
-
