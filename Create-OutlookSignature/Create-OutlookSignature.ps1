@@ -36,7 +36,8 @@ param (
 # Date created: 03/15/2021
 
 # You will need to point this to a share that can be accessed by the user. I chose a SYSVOL location personally, since this was running as a logon script.
-# I'm not totally sure but I think all html signatures will have a "files" folder
+# I'm not totally sure but I think all html signatures will have a "files" folder.
+# In total you will have a "files" folder, an htm file, and an xml file. The xml file will be automatically filled out depending on your number of files in the "files" folder
 $FilesLocation = ""
 
 # First let's find the user's information
@@ -223,3 +224,9 @@ Else{
 		Set-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Office\16.0\Common\MailSettings" -Name "ReplySignature" -Value "$env:USERNAME" -Type "ExpandString"
 	}
 }
+
+
+
+
+
+
